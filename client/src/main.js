@@ -234,23 +234,32 @@ function render() {
 const gameLoop = new GameLoop({ update, render });
 gameLoop.start();
 
-/** Geckos — production'da Vercel'de VITE_GECKOS_* tanımlı olmalı */
+/**
+ * Geckos — Vercel build'de VITE_GECKOS_URL şart.
+ * Port boşsa: https → 443, aksi → 9208 (yerel http://localhost ile uyumlu).
+ */
 function getGeckosConnectionOptions() {
+  const raw = import.meta.env.VITE_GECKOS_URL;
   const url =
-    typeof import.meta.env.VITE_GECKOS_URL === 'string' &&
-    import.meta.env.VITE_GECKOS_URL.length > 0
-      ? import.meta.env.VITE_GECKOS_URL
+    typeof raw === 'string' && raw.trim().length > 0
+      ? raw.trim()
       : 'http://localhost';
+
   const portRaw = import.meta.env.VITE_GECKOS_PORT;
-  const port =
-    portRaw !== undefined && portRaw !== ''
-      ? Number(portRaw)
-      : 9208;
+  const hasExplicitPort =
+    portRaw !== undefined && portRaw !== null && String(portRaw).trim() !== '';
+
+  let port = hasExplicitPort ? Number(portRaw) : NaN;
+  if (!Number.isFinite(port) || port <= 0) {
+    port = url.startsWith('https:') ? 443 : 9208;
+  }
+
   return { url, port };
 }
 
 if (MULTIPLAYER) {
   const geckosOpts = getGeckosConnectionOptions();
+  console.info('[Geckos] Hedef:', `${geckosOpts.url}:${geckosOpts.port}`);
   geckosClient = new GeckosClient(geckosOpts);
   geckosClient.on('lobby:state', (data) => {
     if (data && typeof data === 'object' && 'count' in data) {
@@ -287,10 +296,11 @@ if (MULTIPLAYER) {
       const isLocal =
         url.includes('localhost') || url.includes('127.0.0.1');
       if (import.meta.env.PROD) {
-        lobbyStatusEl.textContent =
-          'Sunucuya bağlanılamadı. Vercel → Settings → Environment Variables:';
+        lobbyStatusEl.textContent = `Bağlanılamadı: ${url}:${port}`;
         lobbyCountEl.textContent =
-          'VITE_GECKOS_URL + VITE_GECKOS_PORT (HTTPS oyun sunucu adresin). Sunucuyu Railway/Render’da çalıştır.';
+          url.includes('localhost')
+            ? 'Vercel → Environment Variables → VITE_GECKOS_URL=https://…onrender.com → Redeploy (build şart).'
+            : 'Sunucu uyuyor olabilir (Render ücretsiz: ilk istek ~1 dk). Vercel’de env sonrası Redeploy yaptın mı?';
       } else if (isLocal) {
         lobbyStatusEl.textContent =
           'Sunucuya bağlanılamadı (sunucu çalışmıyor veya port kapalı).';
