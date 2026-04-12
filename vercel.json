@@ -2,5 +2,11 @@
   "buildCommand": "npm run build",
   "outputDirectory": "client/dist",
   "installCommand": "npm install",
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    {
+      "source": "/.wrtc/:path*",
+      "destination": "https://frogbattle-io.onrender.com/.wrtc/:path*"
+    },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }

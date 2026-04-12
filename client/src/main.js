@@ -299,8 +299,8 @@ if (MULTIPLAYER) {
         lobbyStatusEl.textContent = `Bağlanılamadı: ${url}:${port}`;
         lobbyCountEl.textContent =
           url.includes('localhost')
-            ? 'Vercel → Environment Variables → VITE_GECKOS_URL=https://…onrender.com → Redeploy (build şart).'
-            : 'Sunucu uyuyor olabilir (Render ücretsiz: ilk istek ~1 dk). Vercel’de env sonrası Redeploy yaptın mı?';
+            ? 'Vercel’de VITE_GECKOS_URL = kendi Vercel adresin (proxy için), Redeploy.'
+            : 'Render uyuyor olabilir (~1 dk). VITE_GECKOS_URL Vercel domain’in mi? vercel.json rewrite Render ile eşleşmeli.';
       } else if (isLocal) {
         lobbyStatusEl.textContent =
           'Sunucuya bağlanılamadı (sunucu çalışmıyor veya port kapalı).';
