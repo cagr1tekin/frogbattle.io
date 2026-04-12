@@ -55,4 +55,14 @@ export class LobbyManager {
       channel.emit('lobby:state', payload, { reliable: true });
     }
   }
+
+  /**
+   * Tek kanala güncel sayı — WebRTC tarafında `channel.on` hazır olduktan sonra (ilk yayın kaçmasın).
+   * @param {import('@geckos.io/server').ServerChannel} channel
+   */
+  sendLobbyStateTo(channel) {
+    const count = this.room.players.size;
+    const max = MAX_PLAYERS_PER_ROOM;
+    channel.emit('lobby:state', { count, max }, { reliable: true });
+  }
 }

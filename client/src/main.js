@@ -289,6 +289,8 @@ if (MULTIPLAYER) {
     .then(() => {
       multiplayerMyId = geckosClient.channelId;
       console.log('Bağlandı');
+      // Sunucudaki ilk lobby:state, istemci channel.on kurulmadan gidebiliyor; senkron iste.
+      geckosClient.emit('lobby:requestState', {}, { reliable: true });
     })
     .catch((err) => {
       console.warn('Geckos bağlantısı yok:', err?.message ?? err);

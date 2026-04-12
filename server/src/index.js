@@ -44,6 +44,10 @@ io.onConnection((channel) => {
     }
   });
 
+  channel.on('lobby:requestState', () => {
+    lobby.sendLobbyStateTo(channel);
+  });
+
   channel.onDisconnect(() => {
     lobby.removePlayer(channelId);
     console.log(`Oyuncu ayrıldı: ${channelId}`);
