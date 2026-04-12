@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FrogBattle.io</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: #000;
+        width: 100%;
+        height: 100%;
+      }
+      #mp-game-root {
+        position: fixed;
+        inset: 0;
+      }
+      #mp-game-root.mp-game-root--hidden {
+        visibility: hidden;
+        pointer-events: none;
+      }
+      #gameCanvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        vertical-align: top;
+      }
+      #hud-root {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 10;
+      }
+      #hud-score {
+        position: absolute;
+        top: 16px;
+        left: 20px;
+        font-family: system-ui, Segoe UI, sans-serif;
+        font-size: clamp(1.5rem, 4vw, 2.25rem);
+        font-weight: 700;
+        color: #fff;
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75);
+      }
+      #hud-fps {
+        display: none;
+        position: absolute;
+        top: 10px;
+        right: 12px;
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.9);
+        text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+      }
+      #hud-fps.is-visible {
+        display: block;
+      }
+      #hud-danger {
+        position: absolute;
+        inset: 0;
+      }
+      .danger-edge {
+        position: absolute;
+        opacity: 0;
+        transition: opacity 0.05s linear;
+        pointer-events: none;
+      }
+      .danger-top {
+        top: 0;
+        left: 0;
+        right: 0;
+        height: min(45vh, 280px);
+        background: linear-gradient(to bottom, rgba(220, 38, 38, 0.95), transparent);
+      }
+      .danger-bottom {
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: min(45vh, 280px);
+        background: linear-gradient(to top, rgba(220, 38, 38, 0.95), transparent);
+      }
+      .danger-left {
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: min(45vw, 280px);
+        background: linear-gradient(to right, rgba(220, 38, 38, 0.95), transparent);
+      }
+      .danger-right {
+        top: 0;
+        bottom: 0;
+        right: 0;
+        width: min(45vw, 280px);
+        background: linear-gradient(to left, rgba(220, 38, 38, 0.95), transparent);
+      }
+      #lobby-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem;
+        background: radial-gradient(ellipse at center, #14532d 0%, #052e16 55%, #000 100%);
+        color: #ecfdf5;
+        font-family: system-ui, Segoe UI, sans-serif;
+        text-align: center;
+        padding: 1.5rem;
+      }
+      #lobby-overlay.is-hidden {
+        display: none;
+      }
+      #lobby-status {
+        margin: 0;
+        font-size: clamp(1.25rem, 3.5vw, 1.75rem);
+        font-weight: 600;
+      }
+      #lobby-count {
+        margin: 0;
+        font-size: clamp(1rem, 2.5vw, 1.35rem);
+        opacity: 0.95;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="mp-game-root">
+      <canvas id="gameCanvas"></canvas>
+      <div id="hud-root">
+        <div id="hud-score">Skor: 0</div>
+        <div id="hud-fps" aria-hidden="true">FPS: 60</div>
+        <div id="hud-danger">
+          <div id="danger-top" class="danger-edge danger-top"></div>
+          <div id="danger-bottom" class="danger-edge danger-bottom"></div>
+          <div id="danger-left" class="danger-edge danger-left"></div>
+          <div id="danger-right" class="danger-edge danger-right"></div>
+        </div>
+      </div>
+    </div>
+    <div id="lobby-overlay" aria-live="polite">
+      <p id="lobby-status">Arkadaşını bekliyoruz...</p>
+      <p id="lobby-count">0/3 oyuncu</p>
+    </div>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

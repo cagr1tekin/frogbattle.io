@@ -1,0 +1,19 @@
+{
+  "name": "frogbattle-io",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite client",
+    "build": "vite build client",
+    "preview": "vite preview client",
+    "server": "npm run start --prefix server",
+    "generate:frog-sprite": "node scripts/generate-frog-placeholder.mjs"
+  },
+  "devDependencies": {
+    "canvas": "^3.1.0",
+    "vite": "^6.2.0"
+  },
+  "dependencies": {
+    "@geckos.io/client": "^2.0.0"
+  }
+}

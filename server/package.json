@@ -1,0 +1,16 @@
+{
+  "name": "frogbattle-server",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "^20.20.2"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "server": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@geckos.io/server": "^2.0.0"
+  }
+}
