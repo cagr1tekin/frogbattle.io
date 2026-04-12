@@ -3,7 +3,15 @@ import geckos from '@geckos.io/server';
 import { GameRoom } from './GameRoom.js';
 import { LobbyManager } from './LobbyManager.js';
 
-const PORT = Number(process.env.PORT) || 9208;
+/** Render vb. PaaS: PORT zorunlu. Yerelde boşsa 9208. */
+function resolveListenPort() {
+  const raw = process.env.PORT;
+  if (raw === undefined || raw === '') return 9208;
+  const n = Number.parseInt(String(raw), 10);
+  return Number.isFinite(n) && n > 0 ? n : 9208;
+}
+const PORT = resolveListenPort();
+const HOST = process.env.HOST ?? '0.0.0.0';
 
 const room = new GameRoom();
 const lobby = new LobbyManager(room);
@@ -17,8 +25,8 @@ const httpServer = http.createServer((_req, res) => {
 
 io.addServer(httpServer);
 
-httpServer.listen(PORT, () => {
-  console.log(`Server running on :${PORT}`);
+httpServer.listen(PORT, HOST, () => {
+  console.log(`Server running on http://${HOST}:${PORT}`);
 });
 
 /**
