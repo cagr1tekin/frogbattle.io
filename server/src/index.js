@@ -3,7 +3,7 @@ import geckos from '@geckos.io/server';
 import { GameRoom } from './GameRoom.js';
 import { LobbyManager } from './LobbyManager.js';
 
-const PORT = 9208;
+const PORT = Number(process.env.PORT) || 9208;
 
 const room = new GameRoom();
 const lobby = new LobbyManager(room);

@@ -234,11 +234,24 @@ function render() {
 const gameLoop = new GameLoop({ update, render });
 gameLoop.start();
 
+/** Geckos — production'da Vercel'de VITE_GECKOS_* tanımlı olmalı */
+function getGeckosConnectionOptions() {
+  const url =
+    typeof import.meta.env.VITE_GECKOS_URL === 'string' &&
+    import.meta.env.VITE_GECKOS_URL.length > 0
+      ? import.meta.env.VITE_GECKOS_URL
+      : 'http://localhost';
+  const portRaw = import.meta.env.VITE_GECKOS_PORT;
+  const port =
+    portRaw !== undefined && portRaw !== ''
+      ? Number(portRaw)
+      : 9208;
+  return { url, port };
+}
+
 if (MULTIPLAYER) {
-  geckosClient = new GeckosClient({
-    url: 'http://localhost',
-    port: 9208,
-  });
+  const geckosOpts = getGeckosConnectionOptions();
+  geckosClient = new GeckosClient(geckosOpts);
   geckosClient.on('lobby:state', (data) => {
     if (data && typeof data === 'object' && 'count' in data) {
       const max = typeof data.max === 'number' ? data.max : 2;
@@ -269,10 +282,24 @@ if (MULTIPLAYER) {
       console.log('Bağlandı');
     })
     .catch((err) => {
-      console.warn('Geckos bağlantısı yok (sunucu çalışıyor mu?):', err?.message ?? err);
-      lobbyStatusEl.textContent = 'Sunucuya bağlanılamadı (port 9208 kapalı).';
-      lobbyCountEl.textContent =
-        'Proje kökünde ayrı terminal: npm run server — sonra sayfayı yenile.';
+      console.warn('Geckos bağlantısı yok:', err?.message ?? err);
+      const { url, port } = geckosOpts;
+      const isLocal =
+        url.includes('localhost') || url.includes('127.0.0.1');
+      if (import.meta.env.PROD) {
+        lobbyStatusEl.textContent =
+          'Sunucuya bağlanılamadı. Vercel → Settings → Environment Variables:';
+        lobbyCountEl.textContent =
+          'VITE_GECKOS_URL + VITE_GECKOS_PORT (HTTPS oyun sunucu adresin). Sunucuyu Railway/Render’da çalıştır.';
+      } else if (isLocal) {
+        lobbyStatusEl.textContent =
+          'Sunucuya bağlanılamadı (sunucu çalışmıyor veya port kapalı).';
+        lobbyCountEl.textContent =
+          'Kökte: npm run server — sonra yenile. Adres: ' + url + ':' + port;
+      } else {
+        lobbyStatusEl.textContent = 'Sunucuya bağlanılamadı.';
+        lobbyCountEl.textContent = `${url}:${port} — .env veya Vercel’de VITE_GECKOS_* kontrol et.`;
+      }
     });
 } else {
   console.log('Yerel mod (Faz 1)');
