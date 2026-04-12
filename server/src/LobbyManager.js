@@ -28,6 +28,13 @@ export class LobbyManager {
     }
     this.room.addPlayer(channel, displayName);
     this.broadcastLobbyState();
+    // İstemci tarafında bridge aboneliği çok geç açılırsa ilk lobby:state kaçabiliyor — gecikmeli yedek.
+    const id = channel.id;
+    const resync = () => {
+      if (this.room.players.has(id)) this.sendLobbyStateTo(channel);
+    };
+    setTimeout(resync, 80);
+    setTimeout(resync, 400);
     if (this.room.players.size >= MIN_PLAYERS_TO_START && !this.room.isRunning) {
       this.room.resetMatchState();
       this.room.startLoop();

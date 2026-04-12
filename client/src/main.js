@@ -289,8 +289,11 @@ if (MULTIPLAYER) {
     .then(() => {
       multiplayerMyId = geckosClient.channelId;
       console.log('Bağlandı');
-      // Sunucudaki ilk lobby:state, istemci channel.on kurulmadan gidebiliyor; senkron iste.
+      // İlk lobby:state sıklıkla abonelikten önce gider; istek + kısa gecikme ile yedekle.
       geckosClient.emit('lobby:requestState', {}, { reliable: true });
+      setTimeout(() => {
+        geckosClient?.emit('lobby:requestState', {}, { reliable: true });
+      }, 200);
     })
     .catch((err) => {
       console.warn('Geckos bağlantısı yok:', err?.message ?? err);
