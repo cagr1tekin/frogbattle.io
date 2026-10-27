@@ -12,9 +12,31 @@ import {
   MAP_CENTER,
   MAP_RADIUS,
   MAP_SIZE,
+  POISON_EFFECT_MS,
+  TONGUE_LENGTH_RATIO,
+  TONGUE_TIP_RADIUS,
 } from '../constants.js';
 import frogDeadSpriteUrl from '../../assets/sprites/frog-dead.png?url';
 import frogSpriteUrl from '../../assets/sprites/frog-default.png?url';
+
+/**
+ * @param {string} hex1
+ * @param {string} hex2
+ * @param {number} t 0..1
+ */
+function lerpColor(hex1, hex2, t) {
+  const parse = (h) => [
+    parseInt(h.slice(1, 3), 16),
+    parseInt(h.slice(3, 5), 16),
+    parseInt(h.slice(5, 7), 16),
+  ];
+  const [r1, g1, b1] = parse(hex1);
+  const [r2, g2, b2] = parse(hex2);
+  const r = Math.round(r1 + (r2 - r1) * t);
+  const g = Math.round(g1 + (g2 - g1) * t);
+  const b = Math.round(b1 + (b2 - b1) * t);
+  return `rgb(${r},${g},${b})`;
+}
 
 /**
  * Canvas 2D çizim — Bölüm 8 render sırası.
@@ -362,17 +384,107 @@ export class Renderer {
 
     const mp = gameState.multiplayer === true;
     const pad = JUMP_HEIGHT + 6;
+    const ctx = this.ctx;
     for (const frog of ordered) {
       if (!this.isInViewport(frog.x, frog.y, frog.radius + pad, camera)) {
         continue;
       }
+      this.drawTongue(ctx, frog);
       if (mp && frog.color) {
-        this._drawOtherFrogMultiplayer(this.ctx, frog);
-        this._drawNickname(this.ctx, frog, '#ffffff');
+        this._drawOtherFrogMultiplayer(ctx, frog);
+        this.drawPoisonEffect(ctx, frog);
+        this._drawNickname(ctx, frog, '#ffffff');
       } else {
-        this._drawFrogSprite(this.ctx, frog);
+        this._drawFrogSprite(ctx, frog);
+        this.drawPoisonEffect(ctx, frog);
       }
     }
+  }
+
+  /**
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {{
+   *   x: number;
+   *   y: number;
+   *   radius: number;
+   *   tongue?: { state?: string; progress?: number; angle?: number };
+   * }} frog
+   */
+  drawTongue(ctx, frog) {
+    const t = frog.tongue;
+    if (!t || t.state === 'idle' || Number(t.progress) <= 0) return;
+
+    const ang = Number(t.angle);
+    const baseX = frog.x + Math.cos(ang) * frog.radius * 0.7;
+    const baseY = frog.y + Math.sin(ang) * frog.radius * 0.7;
+    const len = frog.radius * TONGUE_LENGTH_RATIO * Number(t.progress);
+    const tipX = baseX + Math.cos(ang) * len;
+    const tipY = baseY + Math.sin(ang) * len;
+
+    const midX = (baseX + tipX) / 2 + Math.sin(ang) * len * 0.15;
+    const midY = (baseY + tipY) / 2 - Math.cos(ang) * len * 0.15;
+
+    ctx.save();
+
+    ctx.strokeStyle = '#f472b6';
+    ctx.lineWidth = Math.max(3, frog.radius * 0.12);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(baseX, baseY);
+    ctx.quadraticCurveTo(midX, midY, tipX, tipY);
+    ctx.stroke();
+
+    ctx.fillStyle = '#ec4899';
+    ctx.beginPath();
+    ctx.arc(tipX, tipY, TONGUE_TIP_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  /**
+   * @param {CanvasRenderingContext2D} ctx
+   * @param {{
+   *   x: number;
+   *   y: number;
+   *   radius: number;
+   *   poison?: { active?: boolean; startTime?: number };
+   * }} frog
+   */
+  drawPoisonEffect(ctx, frog) {
+    if (!frog.poison?.active || frog.poison.startTime == null) return;
+
+    const elapsed = Date.now() - frog.poison.startTime;
+    const t = Math.min(elapsed / POISON_EFFECT_MS, 1);
+    if (t >= 1) {
+      frog.poison.active = false;
+      return;
+    }
+
+    const alpha = (1 - t) * 0.65;
+
+    ctx.save();
+    ctx.translate(frog.x, frog.y);
+
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = lerpColor('#22c55e', '#a855f7', t);
+    ctx.beginPath();
+    ctx.arc(0, 0, frog.radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    const count = 6;
+    for (let i = 0; i < count; i++) {
+      const pa = (i / count) * Math.PI * 2 + t * Math.PI * 4;
+      const pd = frog.radius * (0.4 + t * 0.7);
+      ctx.globalAlpha = (1 - t) * 0.7;
+      ctx.fillStyle = '#a855f7';
+      ctx.beginPath();
+      ctx.arc(Math.cos(pa) * pd, Math.sin(pa) * pd, 3 + t * 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.restore();
   }
 
   /**
@@ -466,6 +578,8 @@ export class Renderer {
    * @param {{ multiplayer?: boolean }} gameState
    */
   drawPlayerFrog(ctx, frog, gameState) {
+    this.drawTongue(ctx, frog);
+
     const img = this._frogImage;
     const hasSprite = img.complete && img.naturalWidth > 0;
     if (hasSprite) {
@@ -477,6 +591,8 @@ export class Renderer {
     } else {
       this.drawFrog(ctx, frog, img);
     }
+
+    this.drawPoisonEffect(ctx, frog);
 
     if (gameState.multiplayer) {
       this._drawNickname(ctx, frog, '#86efac');

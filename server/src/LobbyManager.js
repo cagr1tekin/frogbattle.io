@@ -27,7 +27,6 @@ export class LobbyManager {
       return;
     }
     this.room.addPlayer(channel, displayName);
-    this.broadcastLobbyState();
     // İstemci tarafında bridge aboneliği çok geç açılırsa ilk lobby:state kaçabiliyor — gecikmeli yedek.
     const id = channel.id;
     const resync = () => {
@@ -41,7 +40,12 @@ export class LobbyManager {
       for (const { channel: ch } of this.room.players.values()) {
         ch.emit('game:start', { minPlayers: MIN_PLAYERS_TO_START }, { reliable: true });
       }
+    } else if (this.room.isRunning) {
+      // Oyun zaten dönüyorsa (3. oyuncu / geç bağlanan) — game:start yalnızca yeni kanala
+      channel.emit('game:start', { minPlayers: MIN_PLAYERS_TO_START }, { reliable: true });
     }
+    // isRunning güncel olsun diye tek yayın (önceden start’tan önce gidiyordu → playing hep yanlış).
+    this.broadcastLobbyState();
   }
 
   /**
@@ -57,7 +61,8 @@ export class LobbyManager {
   broadcastLobbyState() {
     const count = this.room.players.size;
     const max = MAX_PLAYERS_PER_ROOM;
-    const payload = { count, max };
+    const playing = this.room.isRunning;
+    const payload = { count, max, playing };
     for (const { channel } of this.room.players.values()) {
       channel.emit('lobby:state', payload, { reliable: true });
     }
@@ -70,6 +75,7 @@ export class LobbyManager {
   sendLobbyStateTo(channel) {
     const count = this.room.players.size;
     const max = MAX_PLAYERS_PER_ROOM;
-    channel.emit('lobby:state', { count, max }, { reliable: true });
+    const playing = this.room.isRunning;
+    channel.emit('lobby:state', { count, max, playing }, { reliable: true });
   }
 }

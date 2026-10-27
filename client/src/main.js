@@ -4,6 +4,7 @@ import {
   MAP_CENTER,
   MAP_RADIUS,
   MAX_PLAYERS_PER_ROOM,
+  POISON_EFFECT_MS,
 } from './constants.js';
 import { debugFlags } from './debugFlags.js';
 import { Camera } from './game/Camera.js';
@@ -62,6 +63,22 @@ if (
 /** Çok oyunculu: `game:start` gelene kadar oyun sahnesi kapalı */
 let mpGameStarted = false;
 
+/** Sunucu maçı başlattıysa HUD + canvas aç (game:start / lobby:state / state yedekleri). */
+function enterMultiplayerGameplay() {
+  if (mpGameStarted) return;
+  mpGameStarted = true;
+  lobbyOverlay.classList.add('is-hidden');
+  mpGameRoot.classList.remove('mp-game-root--hidden');
+}
+
+function leaveMultiplayerGameplay() {
+  if (!mpGameStarted) return;
+  mpGameStarted = false;
+  lobbyOverlay.classList.remove('is-hidden');
+  mpGameRoot.classList.add('mp-game-root--hidden');
+  lobbyStatusEl.textContent = 'Arkadaşını bekliyoruz...';
+}
+
 if (!MULTIPLAYER) {
   lobbyOverlay.classList.add('is-hidden');
 } else {
@@ -84,6 +101,28 @@ const renderer = new Renderer(ctx, canvas);
 
 const interpolation = new Interpolation();
 const mpInput = new InputHandler(canvas);
+
+/** Çok oyunculu: sunucu `effect:poison` ile başlatılan zehir süresi (ms epoch) */
+const mpPoisonStartById = new Map();
+
+/**
+ * @param {Array<Record<string, unknown>>} frogs
+ */
+function mergePoisonOntoFrogs(frogs) {
+  const now = Date.now();
+  for (const [id, start] of [...mpPoisonStartById.entries()]) {
+    if (now - start >= POISON_EFFECT_MS) {
+      mpPoisonStartById.delete(id);
+    }
+  }
+  for (const f of frogs) {
+    const key = String(f.id);
+    const start = mpPoisonStartById.get(key);
+    if (start != null && now - start < POISON_EFFECT_MS) {
+      f.poison = { active: true, startTime: start };
+    }
+  }
+}
 /** @type {GeckosClient | null} */
 let geckosClient = null;
 /** @type {string | number | null} */
@@ -138,7 +177,9 @@ window.addEventListener('keydown', (e) => {
 function update(dt) {
   if (MULTIPLAYER) {
     if (geckosClient?.isConnected && mpGameStarted) {
-      geckosClient.emit('input', { angle: mpInput.getAngle() }, { reliable: false });
+      const tongueForce = mpInput.getTongueForce();
+      // Hedef açı fare ile (sunucu targetAngle); interpolasyonlu frog.angle gönderilmez.
+      geckosClient.sendInput(mpInput.getAngle(), tongueForce);
     }
     if (!mpGameStarted) {
       return;
@@ -171,6 +212,7 @@ function render() {
     const { frogs, foods, corpses } = interpolation.getInterpolated(
       performance.now(),
     );
+    mergePoisonOntoFrogs(frogs);
     const me =
       multiplayerMyId != null
         ? frogs.find((f) => f.id === multiplayerMyId)
@@ -263,25 +305,37 @@ if (MULTIPLAYER) {
   geckosClient = new GeckosClient(geckosOpts);
   geckosClient.on('lobby:state', (data) => {
     if (data && typeof data === 'object' && 'count' in data) {
-      const max = typeof data.max === 'number' ? data.max : 2;
+      const max = typeof data.max === 'number' ? data.max : MAX_PLAYERS_PER_ROOM;
       const c = Number(data.count);
       lobbyCountEl.textContent = `${c}/${max} oyuncu`;
-      if (mpGameStarted && c < max) {
-        mpGameStarted = false;
-        lobbyOverlay.classList.remove('is-hidden');
-        mpGameRoot.classList.add('mp-game-root--hidden');
-        lobbyStatusEl.textContent = 'Arkadaşını bekliyoruz...';
+      if (data.playing === true) {
+        enterMultiplayerGameplay();
+      } else if (data.playing === false) {
+        leaveMultiplayerGameplay();
       }
     }
   });
   geckosClient.on('game:start', () => {
-    mpGameStarted = true;
-    lobbyOverlay.classList.add('is-hidden');
-    mpGameRoot.classList.remove('mp-game-root--hidden');
+    enterMultiplayerGameplay();
   });
   geckosClient.on('state', (data) => {
     if (data && typeof data === 'object') {
       interpolation.update(data);
+      // game:start WebRTC el sıkışmada kaçarsa tick hâlâ gelir — sahneyi aç.
+      if (
+        !mpGameStarted &&
+        Array.isArray(data.foodsFull) &&
+        data.foodsFull.length > 0
+      ) {
+        enterMultiplayerGameplay();
+      }
+    }
+  });
+  geckosClient.on('effect:poison', (data) => {
+    if (!data || typeof data !== 'object' || !Array.isArray(data.ids)) return;
+    const t = Date.now();
+    for (const id of data.ids) {
+      mpPoisonStartById.set(String(id), t);
     }
   });
   geckosClient
@@ -291,8 +345,10 @@ if (MULTIPLAYER) {
       console.log('Bağlandı');
       // İlk lobby:state sıklıkla abonelikten önce gider; istek + kısa gecikme ile yedekle.
       geckosClient.emit('lobby:requestState', {}, { reliable: true });
+      geckosClient.emit('lobby:requestGameStart', {}, { reliable: true });
       setTimeout(() => {
         geckosClient?.emit('lobby:requestState', {}, { reliable: true });
+        geckosClient?.emit('lobby:requestGameStart', {}, { reliable: true });
       }, 200);
     })
     .catch((err) => {

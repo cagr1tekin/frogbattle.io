@@ -1,12 +1,19 @@
 import {
+  BASE_RADIUS,
+  BODY_COLLISION_COOLDOWN,
+  BODY_COLLISION_PENALTY,
   CORPSE_LIFETIME,
+  KILL_RATIO,
   MAP_CENTER,
   MAP_RADIUS,
+  MAX_RADIUS,
+  RADIUS_GROWTH,
   TICK_RATE,
 } from '../../shared/constants.js';
 import { CollisionSystem } from './CollisionSystem.js';
 import { FoodManager } from './FoodManager.js';
 import { FrogEntity } from './FrogEntity.js';
+import { TongueSystem } from './TongueSystem.js';
 
 const PLAYER_COLORS = ['#4ade80', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#2dd4bf'];
 
@@ -24,6 +31,16 @@ function pickPlayerColor(index) {
 }
 
 /**
+ * @param {number} score
+ */
+function calcRadius(score) {
+  return Math.max(
+    BASE_RADIUS,
+    Math.min(MAX_RADIUS, BASE_RADIUS + score * RADIUS_GROWTH),
+  );
+}
+
+/**
  * Tek oda — yetkili sunucu döngüsü ve anlık durum yayını.
  */
 export class GameRoom {
@@ -32,7 +49,11 @@ export class GameRoom {
     this.players = new Map();
     this.foodManager = new FoodManager();
     this.collisionSystem = new CollisionSystem();
+    this.tongueSystem = new TongueSystem();
     this.foodManager.init();
+
+    /** @type {Map<string | number, { tongueForce: boolean }>} */
+    this.inputMap = new Map();
 
     /** @type {ReturnType<typeof setInterval> | null} */
     this._tickInterval = null;
@@ -56,6 +77,7 @@ export class GameRoom {
     const color = pickPlayerColor(this._playerColorIndex++);
     const frog = new FrogEntity(channelId, x, y, color, name);
     this.players.set(channelId, { channel, frog, name });
+    this.inputMap.set(channelId, { tongueForce: false });
   }
 
   /**
@@ -64,6 +86,7 @@ export class GameRoom {
   removePlayer(channelId) {
     this.corpses.delete(channelId);
     this.players.delete(channelId);
+    this.inputMap.delete(channelId);
     if (this.players.size < 2) {
       this.stopLoop();
       this._gameEnded = false;
@@ -82,14 +105,18 @@ export class GameRoom {
 
   /**
    * @param {string | number} channelId
-   * @param {{ angle: number }} payload
+   * @param {{ angle?: number; tongueForce?: boolean }} payload
    */
   onInput(channelId, payload) {
     const entry = this.players.get(channelId);
     if (!entry || !entry.frog.isAlive) return;
     if (typeof payload.angle === 'number') {
-      entry.frog.angle = payload.angle;
+      entry.frog.targetAngle = payload.angle;
     }
+    const cur = this.inputMap.get(channelId) ?? { tongueForce: false };
+    this.inputMap.set(channelId, {
+      tongueForce: cur.tongueForce || !!payload.tongueForce,
+    });
   }
 
   startLoop() {
@@ -105,6 +132,33 @@ export class GameRoom {
     }
   }
 
+  /**
+   * @param {string} event
+   * @param {unknown} data
+   */
+  _broadcastReliable(event, data) {
+    for (const { channel } of this.players.values()) {
+      channel.emit(event, data, { reliable: true });
+    }
+  }
+
+  /**
+   * @param {FrogEntity} victim
+   */
+  _killFrog(victim) {
+    if (!victim.isAlive) return;
+    victim.isAlive = false;
+    const now = Date.now();
+    this.corpses.set(victim.id, {
+      id: victim.id,
+      x: victim.x,
+      y: victim.y,
+      radius: victim.radius,
+      score: victim.score,
+      killedAt: now,
+    });
+  }
+
   tick() {
     const tickStart = Date.now();
     const dt = 1 / TICK_RATE;
@@ -116,14 +170,68 @@ export class GameRoom {
       }
     }
 
+    /** @type {Map<string | number, FrogEntity>} */
+    const frogMap = new Map();
+    for (const [id, entry] of this.players) {
+      frogMap.set(id, entry.frog);
+    }
+
     for (const { frog } of this.players.values()) {
       if (frog.isAlive) {
         frog.update(dt);
       }
     }
 
+    this.tongueSystem.updateAll(frogMap, dt, this.inputMap);
+    const tongueResults = this.tongueSystem.checkCollisions(frogMap);
+
+    for (const { killer, victim, type } of tongueResults.tongueEats) {
+      const killerEntry = this.players.get(killer);
+      const victimEntry = this.players.get(victim);
+      const killerFrog = killerEntry?.frog;
+      const victimFrog = victimEntry?.frog;
+      if (
+        !killerFrog ||
+        !victimFrog ||
+        !killerFrog.isAlive ||
+        !victimFrog.isAlive
+      ) {
+        continue;
+      }
+      killerFrog.score += Math.floor(victimFrog.score * KILL_RATIO);
+      killerFrog.radius = calcRadius(killerFrog.score);
+      this._killFrog(victimFrog);
+      this._broadcastReliable('game:tongueEat', { killer, victim, type });
+    }
+
+    for (const { a: aId, b: bId } of tongueResults.bodyCollisions) {
+      const a = frogMap.get(aId);
+      const b = frogMap.get(bId);
+      if (!a || !b || !a.isAlive || !b.isAlive) continue;
+      a.score = Math.max(0, Math.floor(a.score * (1 - BODY_COLLISION_PENALTY)));
+      b.score = Math.max(0, Math.floor(b.score * (1 - BODY_COLLISION_PENALTY)));
+      a.radius = calcRadius(a.score);
+      b.radius = calcRadius(b.score);
+      a.bodyCollisionCooldown = BODY_COLLISION_COOLDOWN;
+      b.bodyCollisionCooldown = BODY_COLLISION_COOLDOWN;
+      this._broadcastReliable('effect:poison', { ids: [aId, bId] });
+      this._broadcastReliable('game:bodyCollision', {
+        a: aId,
+        b: bId,
+        penaltyA: a.score,
+        penaltyB: b.score,
+      });
+    }
+
+    for (const id of this.players.keys()) {
+      const cur = this.inputMap.get(id);
+      if (cur) {
+        this.inputMap.set(id, { tongueForce: false });
+      }
+    }
+
     const frogs = [...this.players.values()].map((p) => p.frog);
-    // Önce itme → yem (sil + rastgele respawn + skor) → kurbağa yeme.
+
     this.collisionSystem.checkFrogCollisions(frogs);
     const { removed, added } = this.collisionSystem.checkFoodCollisions(
       frogs,
@@ -170,6 +278,12 @@ export class GameRoom {
           score: f.score,
           color: f.color,
           name: f.name,
+          tongue: {
+            state: f.tongue.state,
+            progress: f.tongue.progress,
+            angle: f.tongue.angle,
+            tip: { x: f.tongue.tip.x, y: f.tongue.tip.y },
+          },
         })),
       foods: { added, removed },
       foodsFull: this.foodManager.getFoodsList().map((f) => ({ ...f })),

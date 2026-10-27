@@ -1,7 +1,7 @@
 import http from 'node:http';
 import geckos from '@geckos.io/server';
 import { GameRoom } from './GameRoom.js';
-import { LobbyManager } from './LobbyManager.js';
+import { LobbyManager, MIN_PLAYERS_TO_START } from './LobbyManager.js';
 
 /** Render vb. PaaS: PORT zorunlu. Yerelde boşsa 9208. */
 function resolveListenPort() {
@@ -40,12 +40,25 @@ io.onConnection((channel) => {
 
   channel.on('input', (data) => {
     if (data && typeof data === 'object' && 'angle' in data) {
-      room.onInput(channelId, /** @type {{ angle: number }} */ (data));
+      room.onInput(
+        channelId,
+        /** @type {{ angle?: number; tongueForce?: boolean }} */ (data),
+      );
     }
   });
 
   channel.on('lobby:requestState', () => {
     lobby.sendLobbyStateTo(channel);
+  });
+
+  channel.on('lobby:requestGameStart', () => {
+    if (room.isRunning) {
+      channel.emit(
+        'game:start',
+        { minPlayers: MIN_PLAYERS_TO_START },
+        { reliable: true },
+      );
+    }
   });
 
   channel.onDisconnect(() => {

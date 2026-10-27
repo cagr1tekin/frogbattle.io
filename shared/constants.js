@@ -51,3 +51,23 @@ export const FOOD_PARTICLE_LIFE_MS = 300;
 /** Harita kenarı uyarısı — ekran overlay */
 export const BORDER_WARN_DISTANCE = 200;
 export const BORDER_WARN_MAX_OPACITY = 0.4;
+
+/** Dönüş hızı — skor arttıkça yavaşlar (rad/sn) */
+export const TURN_SPEED_BASE = 4.0;
+export const TURN_SPEED_SCALE = 0.003;
+
+/** Dil mekaniği (Faz 2.6) */
+export const TONGUE_INTERVAL_MIN = 1000;
+export const TONGUE_INTERVAL_MAX = 2000;
+export const TONGUE_EXTEND_MS = 180;
+export const TONGUE_OUT_MS = 120;
+export const TONGUE_RETRACT_MS = 150;
+export const TONGUE_LENGTH_RATIO = 1.5;
+export const TONGUE_TIP_RADIUS = 6;
+
+/** Vücut çarpışması */
+export const BODY_COLLISION_PENALTY = 0.25;
+export const BODY_COLLISION_COOLDOWN = 2000;
+
+/** Zehir efekti (istemci çizimi) */
+export const POISON_EFFECT_MS = 1500;

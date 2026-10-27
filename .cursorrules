@@ -1,6 +1,6 @@
 # 🐸 FrogBattle.io — .cursorrules
 
-> **AI Geliştirici Kılavuzu** · Canvas 2D → Geckos.io → Full Game · v2.1
+> **AI Geliştirici Kılavuzu** · Canvas 2D → Geckos.io → Full Game · v2.2
 
 ---
 
@@ -29,6 +29,7 @@ FrogBattle.io, agar.io / slither.io tarzı sevimli bir multiplayer survival oyun
 | **Faz 1** | Oyun mekaniği | Yok | Yok |
 | **Faz 2** | Geckos.io entegrasyonu | Node.js | 3 oyuncu testi |
 | **Faz 2.5** | Bug fix & cila | Node.js | Aktif |
+| **Faz 2.6** | Dil mekaniği + vücut çarpışması | Node.js | Aktif |
 | **Faz 3** | Menü, oda, UI | Node.js | Tam lobby |
 
 ---
@@ -77,17 +78,18 @@ frogbattle/
 │   │   │   ├── LocalGame.js
 │   │   │   ├── FrogEntity.js
 │   │   │   ├── FoodManager.js
-│   │   │   └── CollisionSystem.js
+│   │   │   ├── CollisionSystem.js
+│   │   │   └── TongueSystem.js      # YENİ — dil mekaniği (istemci render)
 │   │   ├── network/
 │   │   │   └── GeckosClient.js
-│   │   └── ui/                    # FAZ 3
+│   │   └── ui/                      # FAZ 3
 │   │       ├── MainMenu.js
 │   │       ├── LobbyScreen.js
 │   │       ├── HUD.js
 │   │       └── EndScreen.js
 │   └── assets/sprites/
-│       ├── frog-default.png       # Diri kurbağa sprite
-│       └── frog-dead.png          # Ölü kurbağa sprite
+│       ├── frog-default.png
+│       └── frog-dead.png
 ├── server/
 │   └── src/
 │       ├── index.js
@@ -95,6 +97,7 @@ frogbattle/
 │       ├── FrogEntity.js
 │       ├── FoodManager.js
 │       ├── CollisionSystem.js
+│       ├── TongueSystem.js          # YENİ — dil çarpışma mantığı (sunucu)
 │       └── LobbyManager.js
 ├── shared/
 │   └── constants.js
@@ -117,15 +120,6 @@ apply(ctx, frog) {
   ctx.scale(this.scale, this.scale);
   // ASLA ctx.rotate() — kuzey hep yukarıda
 }
-
-// Sprite döner, kamera değil
-drawFrog(ctx, frog) {
-  ctx.save();
-  ctx.translate(frog.x, frog.y);
-  ctx.rotate(frog.angle);
-  ctx.drawImage(sprite, -r, -r, r * 2, r * 2);
-  ctx.restore();
-}
 ```
 
 ---
@@ -139,302 +133,489 @@ drawFrog(ctx, frog) {
 - Hız sabit — squash & stretch animasyonu var ama **gerçek hız değişmez**
 
 ```js
-// Her frame — hız sabit
 const speed = BASE_SPEED / (1 + frog.score * SPEED_SCALE);
 frog.x += Math.cos(frog.angle) * speed * deltaTime;
 frog.y += Math.sin(frog.angle) * speed * deltaTime;
 ```
 
-### Zıplama Animasyonu — Squash & Stretch
+### Dönüş Hızı — Skora Bağlı Yavaşlama
 
-Hareket hızı değişmez. Sadece **görsel olarak** squash & stretch:
+Mouse yönüne **anlık** dönme yoktur. Kurbağa hedef açıya doğru `TURN_SPEED` ile döner. Skor arttıkça dönüş yavaşlar:
 
 ```js
-const jumpPhase = (Date.now() % JUMP_PERIOD) / JUMP_PERIOD; // 0..1
-const jumpScale = 1 + Math.sin(jumpPhase * Math.PI * 2) * JUMP_AMPLITUDE;
+// FrogEntity.update() veya InputHandler içinde — her frame
+const targetAngle = inputHandler.getAngle();
 
-ctx.scale(jumpScale, 1 / jumpScale);   // yatay şişer, dikey daralır
-// ctx.translate ile kurbağayı yukarı/aşağı kaydır — zıplama hissi:
-const jumpOffset = -Math.abs(Math.sin(jumpPhase * Math.PI)) * JUMP_HEIGHT;
-ctx.translate(0, jumpOffset);
+// Skora bağlı dönüş hızı — büyük kurbağa ağır döner
+const turnSpeed = TURN_SPEED_BASE / (1 + frog.score * TURN_SPEED_SCALE);
+
+// En kısa yoldan döndür (açı sarmalama)
+let delta = targetAngle - frog.angle;
+while (delta >  Math.PI) delta -= Math.PI * 2;
+while (delta < -Math.PI) delta += Math.PI * 2;
+
+// Kare bağımsız — deltaTime ile çarp
+const maxTurn = turnSpeed * deltaTime;
+frog.angle += Math.sign(delta) * Math.min(Math.abs(delta), maxTurn);
 ```
 
 | Sabit | Değer | Açıklama |
 |---|---|---|
-| `JUMP_PERIOD` | `500` ms | Bir tam zıplama döngüsü |
-| `JUMP_AMPLITUDE` | `0.15` | Squash şiddeti |
-| `JUMP_HEIGHT` | `8` px | Dikey zıplama ofseti |
+| `TURN_SPEED_BASE` | `4.0` | Başlangıç dönüş hızı (rad/sn) |
+| `TURN_SPEED_SCALE` | `0.003` | Skor başına azalma katsayısı |
 
-### Harita Sınırında Hareket — KRİTİK
+> Örnek: skor=0 → 4.0 rad/sn (çok çevik). skor=100 → ~1.05 rad/sn (belirgin yavaşlama). skor=300 → ~0.48 rad/sn (çok ağır).
 
-Mouse harita dışında olsa bile kurbağa **durmaz veya yavaşlamaz**:
+**Dil dışarıdayken dönüş tamamen kilitlenir** — `TONGUE_LOCK_ROTATION = true`. Dil geri çekilene kadar açı değiştirilemez (bkz. Bölüm 7).
+
+### Zıplama Animasyonu — Squash & Stretch
 
 ```js
-// Sınır kontrolü: pozisyonu klamp et AMA hız ve açıyı değiştirme
+const jumpPhase = (Date.now() % JUMP_PERIOD) / JUMP_PERIOD;
+const jumpScale = 1 + Math.sin(jumpPhase * Math.PI * 2) * JUMP_AMPLITUDE;
+const jumpOffset = -Math.abs(Math.sin(jumpPhase * Math.PI)) * JUMP_HEIGHT;
+
+ctx.save();
+ctx.translate(frog.x, frog.y + jumpOffset);
+ctx.rotate(frog.angle);
+ctx.scale(jumpScale, 1 / jumpScale);
+ctx.drawImage(sprite, -r, -r, r * 2, r * 2);
+ctx.restore();
+```
+
+### Harita Sınırında Hareket
+
+```js
 const distFromCenter = Math.hypot(frog.x - MAP_CENTER, frog.y - MAP_CENTER);
 if (distFromCenter + frog.radius > MAP_RADIUS) {
-  // Kurbağayı daire içine geri it
   const angle = Math.atan2(frog.y - MAP_CENTER, frog.x - MAP_CENTER);
   frog.x = MAP_CENTER + Math.cos(angle) * (MAP_RADIUS - frog.radius);
   frog.y = MAP_CENTER + Math.sin(angle) * (MAP_RADIUS - frog.radius);
-  // HIZI VEYA AÇIYI DEĞİŞTİRME — mouse yönüne devam et
+  // Açı ve hız DEĞİŞMEZ
 }
 ```
 
-Mouse sınır dışında → kurbağa sınır boyunca en yakın yönde devam eder. Yavaşlama **yasak**.
+---
 
-### Yeme Mekaniği
+## 7. Dil Mekaniği — TongueSystem ⭐
+
+> Dil mekaniği oyunun en kritik yeni özelliğidir. Tüm çarpışma mantığı sunucuda hesaplanır.
+
+### Tetikleme: Otomatik + Space ile Erken
+
+Dil her `TONGUE_INTERVAL_MIN`–`TONGUE_INTERVAL_MAX` ms arasında rastgele otomatik çıkar. Oyuncu **Space** veya **Sol tık** ile cooldown bitmeden erken tetikleyebilir. Bekleme süresine bakılmaksızın dil tekrar çıkabilmesi için önceki dil **tamamen geri** çekilmiş olmalıdır.
 
 ```js
-// Büyük yer küçüğü
-const canEatNormal = attacker.radius > victim.radius * EAT_RATIO;
-
-// Sneak attack — küçük büyüğü yiyebilir (tam arkadan)
-const angleDiff = Math.abs(attacker.angle - (victim.angle + Math.PI)) % (Math.PI * 2);
-const isSneak = angleDiff < SNEAK_ANGLE_THRESHOLD;
-
-const canEat = canEatNormal || isSneak;
+// FrogEntity — dil state
+tongue: {
+  state: 'idle',      // 'idle' | 'extending' | 'out' | 'retracting'
+  progress: 0,        // 0..1 — dil uzunluk ilerlemesi
+  angle: 0,           // çıkma anındaki kurbağa açısı — DİL ÇIKARKEN AÇI SABIT KALIR
+  nextAutoTime: 0,    // bir sonraki otomatik tetikleme zamanı
+  tip: { x:0, y:0 }, // dünya koordinatı — çarpışma için
+}
 ```
 
-### Ölü Kurbağa Mekaniği — YENİ
+```js
+// Otomatik tetikleme zamanı belirleme
+scheduleNextTongue() {
+  const wait = TONGUE_INTERVAL_MIN
+    + Math.random() * (TONGUE_INTERVAL_MAX - TONGUE_INTERVAL_MIN);
+  this.tongue.nextAutoTime = Date.now() + wait;
+}
+
+// Her frame — tetikleme kontrolü
+updateTongue(deltaTime, now, forceOut = false) {
+  const t = this.tongue;
+
+  // Otomatik veya zorla tetikleme
+  if (t.state === 'idle' && (forceOut || now >= t.nextAutoTime)) {
+    t.state = 'extending';
+    t.progress = 0;
+    t.angle = this.angle;          // dil çıkarken açıyı sabitle
+    this.tongue.lockRotation = true;
+    return;
+  }
+
+  if (t.state === 'extending') {
+    t.progress += deltaTime / (TONGUE_EXTEND_MS / 1000);
+    if (t.progress >= 1) { t.progress = 1; t.state = 'out'; }
+    this._updateTip();
+  }
+
+  if (t.state === 'out') {
+    // TONGUE_OUT_MS kadar bekle, sonra geri çek
+    t.outTimer = (t.outTimer || 0) + deltaTime * 1000;
+    if (t.outTimer >= TONGUE_OUT_MS) {
+      t.outTimer = 0;
+      t.state = 'retracting';
+    }
+    this._updateTip();
+  }
+
+  if (t.state === 'retracting') {
+    t.progress -= deltaTime / (TONGUE_RETRACT_MS / 1000);
+    if (t.progress <= 0) {
+      t.progress = 0;
+      t.state = 'idle';
+      this.tongue.lockRotation = false;  // dönüş kilidi açılır
+      this.scheduleNextTongue();
+    }
+    this._updateTip();
+  }
+}
+
+_updateTip() {
+  const len = this.radius * TONGUE_LENGTH_RATIO * this.tongue.progress;
+  this.tongue.tip.x = this.x + Math.cos(this.tongue.angle) * (this.radius + len);
+  this.tongue.tip.y = this.y + Math.sin(this.tongue.angle) * (this.radius + len);
+}
+```
+
+### Dil Uzunluğu
+
+```js
+// Dil uzunluğu = kurbağanın radius'u ile orantılı
+const tongueLength = frog.radius * TONGUE_LENGTH_RATIO; // TONGUE_LENGTH_RATIO = 1.5
+```
+
+Küçük kurbağanın dili kısa, büyük kurbağanın dili uzundur — ama kurbağanın kendi vücudundan orantılı mesafede çıkar.
+
+### Dil Çarpışma Kuralları — KRİTİK
+
+Tüm dil çarpışmaları **sunucuda** `TongueSystem.js` içinde hesaplanır.
+
+#### Kural 1: Dil ucuna dil ucu değerse (büyük yer küçüğü)
+
+```js
+// İki dil aynı anda dışarıdaysa — uç nokta mesafesi kontrolü
+const tipDist = Math.hypot(a.tongue.tip.x - b.tongue.tip.x,
+                           a.tongue.tip.y - b.tongue.tip.y);
+
+if (tipDist < TONGUE_TIP_RADIUS * 2) {
+  // Büyük kurbağa (daha büyük radius) küçüğü yer
+  const winner = a.radius >= b.radius ? a : b;
+  const loser  = a.radius >= b.radius ? b : a;
+  // winner, loser'ı yer — normal yeme kuralları uygulanır
+  results.tongueEats.push({ killer: winner.id, victim: loser.id, type: 'tongue-vs-tongue' });
+}
+```
+
+#### Kural 2: Dil ucu karşı kurbağanın vücuduna değerse (skor fark etmez — yer)
+
+```js
+// a'nın dili b'nin vücuduna değdi mi?
+const distToBody = Math.hypot(a.tongue.tip.x - b.x, a.tongue.tip.y - b.y);
+
+if (distToBody < b.radius + TONGUE_TIP_RADIUS) {
+  // a, b'yi yer — BOYUT FARKI ARANMAZ
+  results.tongueEats.push({ killer: a.id, victim: b.id, type: 'tongue-vs-body' });
+}
+```
+
+#### Kural 3: Vücut-vücut çarpışması (her iki dil içerideyken)
+
+Dillerin **her ikisi de içerideyken** (`state === 'idle'`) vücutlar çakışırsa:
+
+```js
+if (a.tongue.state === 'idle' && b.tongue.state === 'idle') {
+  const dist = Math.hypot(a.x - b.x, a.y - b.y);
+  if (dist < a.radius + b.radius) {
+    // Her iki kurbağanın skoru %25 azalır — ölüm olmaz
+    // Cooldown yoksa (son vücut çarpışmasından BODY_COLLISION_COOLDOWN ms geçtiyse)
+    if (!a.bodyCollisionCooldown && !b.bodyCollisionCooldown) {
+      results.bodyCollisions.push({ a: a.id, b: b.id });
+    }
+  }
+}
+```
+
+> Not: Vücut-vücut kontrolü, yeme kontrolünden **ayrıdır** ve **önce** koşar. Yenebiliyorlarsa yeme önceliklidir — hem yeme hem hasar olmaz.
+
+### Vücut Çarpışması Hasarı & Zehir Efekti
+
+```js
+// Sunucu — GameRoom.tick() içinde bodyCollisions işleme
+for (const { a: aId, b: bId } of results.bodyCollisions) {
+  const a = frogs.get(aId), b = frogs.get(bId);
+
+  // %25 skor azaltma (minimum 0)
+  a.score = Math.max(0, Math.floor(a.score * (1 - BODY_COLLISION_PENALTY)));
+  b.score = Math.max(0, Math.floor(b.score * (1 - BODY_COLLISION_PENALTY)));
+
+  // Radius güncelle
+  a.radius = calcRadius(a.score);
+  b.radius = calcRadius(b.score);
+
+  // Cooldown başlat — tekrar hasar almalarını engelle
+  a.bodyCollisionCooldown = BODY_COLLISION_COOLDOWN;
+  b.bodyCollisionCooldown = BODY_COLLISION_COOLDOWN;
+
+  // İstemciye zehir efekti bildirimi gönder
+  channel.emit('effect:poison', { ids: [aId, bId] }, { reliable: true });
+}
+
+// Her tick cooldown'u azalt
+if (frog.bodyCollisionCooldown > 0) {
+  frog.bodyCollisionCooldown -= 1000 / TICK_RATE;
+}
+```
+
+### Zehir Efekti — İstemci Tarafı
+
+```js
+// FrogEntity (istemci) — zehir efekti state
+poison: {
+  active: false,
+  startTime: 0,
+  duration: POISON_EFFECT_MS,  // 1500ms
+}
+
+// Renderer.js — drawFrog() içinde
+if (frog.poison.active) {
+  const elapsed = Date.now() - frog.poison.startTime;
+  const t = Math.min(elapsed / frog.poison.duration, 1);
+  const alpha = 1 - t;  // başta güçlü, sonra solar
+
+  // Kurbağanın üstüne yeşil→mor renk overlay (zehir rengi)
+  ctx.save();
+  ctx.translate(frog.x, frog.y);
+  ctx.globalAlpha = alpha * 0.65;
+  ctx.fillStyle = lerpColor('#22c55e', '#a855f7', t);  // yeşil→mor
+  ctx.beginPath();
+  ctx.arc(0, 0, frog.radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // Üstte küçük mor parçacıklar (spiral efekti)
+  drawPoisonParticles(ctx, frog, t);
+  ctx.restore();
+
+  if (t >= 1) frog.poison.active = false;
+}
+
+// Renk arası interpolasyon yardımcısı
+function lerpColor(c1, c2, t) {
+  // hex renkleri RGB'ye çevir, lerp uygula, hex'e geri döndür
+}
+```
+
+```js
+// Parçacık efekti — mor kabarcıklar spiral çizer
+function drawPoisonParticles(ctx, frog, t) {
+  const count = 6;
+  for (let i = 0; i < count; i++) {
+    const particleAngle = (i / count) * Math.PI * 2 + t * Math.PI * 4;
+    const dist = frog.radius * (0.5 + t * 0.8);
+    const px = Math.cos(particleAngle) * dist;
+    const py = Math.sin(particleAngle) * dist;
+    ctx.fillStyle = '#a855f7';
+    ctx.globalAlpha = (1 - t) * 0.8;
+    ctx.beginPath();
+    ctx.arc(px, py, 3 + t * 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+```
+
+### Dil Render — İstemci TongueSystem.js
+
+```js
+// Renderer.js içinde — kurbağadan sonra, isimden önce çizilir
+drawTongue(ctx, frog) {
+  const t = frog.tongue;
+  if (t.state === 'idle') return;
+
+  const baseX = frog.x + Math.cos(t.angle) * frog.radius * 0.7;
+  const baseY = frog.y + Math.sin(t.angle) * frog.radius * 0.7;
+  const len = frog.radius * TONGUE_LENGTH_RATIO * t.progress;
+  const tipX = baseX + Math.cos(t.angle) * len;
+  const tipY = baseY + Math.sin(t.angle) * len;
+
+  // Dil gövdesi — pembe çizgi
+  ctx.save();
+  ctx.strokeStyle = '#f472b6';
+  ctx.lineWidth = Math.max(3, frog.radius * 0.12);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(baseX, baseY);
+
+  // Hafif kıvrım — quadratic bezier
+  const midX = (baseX + tipX) / 2 + Math.sin(t.angle) * len * 0.15;
+  const midY = (baseY + tipY) / 2 - Math.cos(t.angle) * len * 0.15;
+  ctx.quadraticCurveTo(midX, midY, tipX, tipY);
+  ctx.stroke();
+
+  // Dil ucu — top şeklinde
+  ctx.fillStyle = '#ec4899';
+  ctx.beginPath();
+  ctx.arc(tipX, tipY, TONGUE_TIP_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+```
+
+---
+
+## 8. Ölü Kurbağa Mekaniği
 
 Bir kurbağa öldüğünde **sunucu `corpse` olarak saklar**:
 
 ```js
-// Sunucu — GameRoom.js
 corpses: Map<id, { x, y, radius, score, killedAt }>
-
-// Corpse özellikleri:
-// - Haritada kalır (30 saniye veya yenilene kadar)
-// - Herhangi bir canlı kurbağa üstüne gidip yiyebilir
+// - 30 saniye veya yenilene kadar haritada kalır
+// - frog-dead.png ile çizilir (%70 opacity)
 // - Yenince: yiyen.score += Math.floor(corpse.score * KILL_RATIO)
-// - frog-dead.png sprite ile çizilir (yarı saydam, %70 opacity)
-// - Corpse büyümez, yaşamaz — sadece bekler
-```
-
-```js
-// İstemci — Renderer.js
-drawCorpse(ctx, corpse) {
-  ctx.globalAlpha = 0.7;
-  ctx.save();
-  ctx.translate(corpse.x, corpse.y);
-  ctx.drawImage(deadSprite, -r, -r, r*2, r*2);
-  ctx.restore();
-  ctx.globalAlpha = 1.0;
-}
 ```
 
 ---
 
-## 7. Harita Sistemi — YUVARLAK HARİTA
-
-> Harita **kare değil, daire**dir. Dışarısı karanlık ve girilemez.
-
-### Render
+## 9. Harita Sistemi — Yuvarlak
 
 ```js
-// Renderer.js — yuvarlak harita clip
-drawMap(ctx) {
-  // 1. Tüm canvas'ı koyu renkle doldur (dışarısı)
-  ctx.fillStyle = '#0a0a0a';
-  ctx.fillRect(0, 0, FULL_W, FULL_H);
-
-  // 2. Daire clip path — sadece daire içi çizilir
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(MAP_CENTER, MAP_CENTER, MAP_RADIUS, 0, Math.PI * 2);
-  ctx.clip();
-
-  // 3. Daire içi: tema arka planı + grid
-  drawBackground(ctx);   // degrade + grid
-  drawFoods(ctx);
-  drawCorpses(ctx);
-  drawFrogs(ctx);
-
-  ctx.restore();  // clip biter
-
-  // 4. Sınır halkası (clip dışında, üstte)
-  ctx.beginPath();
-  ctx.arc(MAP_CENTER, MAP_CENTER, MAP_RADIUS, 0, Math.PI * 2);
-  ctx.strokeStyle = '#52B788';
-  ctx.lineWidth = 6;
-  ctx.shadowBlur = 20;
-  ctx.shadowColor = '#52B788';
-  ctx.stroke();
-  ctx.shadowBlur = 0;
-}
-```
-
-### Sabitler
-
-```js
-MAP_RADIUS  = 2000   // Harita yarıçapı (px)
-MAP_CENTER  = 2000   // Hem x hem y merkezi (MAP_RADIUS ile aynı)
-MAP_SIZE    = 4000   // MAP_RADIUS * 2 (eski kare referansı için)
+// Renderer.js — clip ile daire harita
+ctx.save();
+ctx.beginPath();
+ctx.arc(MAP_CENTER, MAP_CENTER, MAP_RADIUS, 0, Math.PI * 2);
+ctx.clip();
+// ... içerik ...
+ctx.restore();
+// Sınır halkası clip dışında çizilir
 ```
 
 ---
 
-## 8. Çarpışma Sistemi — Sunucu Authoritative
+## 10. Çarpışma Sistemi — Sunucu Authoritative
 
-> Tüm çarpışmalar **sunucuda** hesaplanır. İstemci sonucu render eder.
+Tüm çarpışmalar sunucuda hesaplanır. Öncelik sırası:
 
-### Kurbağa-Kurbağa Çarpışması
-
-```js
-// CollisionSystem.js (sunucu)
-checkFrogCollisions(frogs) {
-  const results = { eats: [], pushes: [] };
-  const frogList = [...frogs.values()].filter(f => f.isAlive);
-
-  for (let i = 0; i < frogList.length; i++) {
-    for (let j = i + 1; j < frogList.length; j++) {
-      const a = frogList[i], b = frogList[j];
-      const dist = Math.hypot(a.x - b.x, a.y - b.y);
-      const overlap = a.radius + b.radius - dist;
-
-      if (overlap <= 0) continue;
-
-      // Yeme kontrolü
-      if (a.canEat(b)) {
-        results.eats.push({ killer: a.id, victim: b.id });
-      } else if (b.canEat(a)) {
-        results.eats.push({ killer: b.id, victim: a.id });
-      } else {
-        // İçiçe geçme engeli — fizik push
-        // KESİNLİKLE birbirinin içine girememeli
-        results.pushes.push({ a: a.id, b: b.id, overlap, dist });
-      }
-    }
-  }
-  return results;
-}
-
-// Push uygulama — GameRoom.tick() içinde
-applyPush(a, b, overlap, dist) {
-  const nx = (b.x - a.x) / dist;  // normalize
-  const ny = (b.y - a.y) / dist;
-  const push = overlap / 2 + 0.5; // yarı yarıya it
-  a.x -= nx * push;
-  a.y -= ny * push;
-  b.x += nx * push;
-  b.y += ny * push;
-}
+```
+1. Dil-vücut çarpışması   → yeme (boyut farketmez)
+2. Dil-dil çarpışması     → büyük yer küçüğü
+3. Normal yeme            → büyük yer küçüğü (EAT_RATIO)
+4. Vücut-vücut çarpışması → her iki tarafa %25 skor hasarı + zehir
+5. Fizik push             → çakışma engelleme
 ```
 
-**Altın kural:** Yiyemiyorlarsa birbirini **itiyorlar**, içinden geçmiyorlar. `overlap > 0` olan her çift için push uygulanır.
+> **Öncelik neden önemli:** Aynı tick içinde hem yeme hem hasar koşulu sağlanabilir. Her çift için sadece **en yüksek öncelikli** kural uygulanır, ikisi aynı anda olmaz.
 
-### Yem Çarpışması
+### Yeme Mekaniği (Normal)
 
 ```js
-// Sunucu — her tick
-checkFoodCollisions(frogs, foods) {
-  const eaten = [];
-  for (const frog of frogs.values()) {
-    if (!frog.isAlive) continue;
-    for (const food of foods.values()) {
-      const dist = Math.hypot(frog.x - food.x, frog.y - food.y);
-      if (dist < frog.radius + food.radius) {
-        frog.score += FOOD_VALUE;   // +1 skor
-        eaten.push(food.id);
-        // O pozisyonda yeni yem spawn et
-      }
-    }
-  }
-  return eaten;
-}
+const canEatNormal = attacker.radius > victim.radius * EAT_RATIO;
+const angleDiff = Math.abs(attacker.angle - (victim.angle + Math.PI)) % (Math.PI * 2);
+const isSneak = angleDiff < SNEAK_ANGLE_THRESHOLD;
+const canEat = canEatNormal || isSneak;
 ```
-
-**Yem kuralları:**
-- Her yem `FOOD_VALUE = 1` skor verir
-- Yenilen yem **aynı tick içinde** rastgele başka noktada respawn olur
-- Toplam yem sayısı her zaman `FOOD_COUNT = 400` olarak korunur
-- Yem listesi istemciye delta olarak gönderilir: `{ added: [...], removed: [id] }`
 
 ---
 
-## 9. Oyun Mekaniği Sabitleri
+## 11. Oyun Mekaniği Sabitleri
 
 ```js
 // shared/constants.js
-export const MAP_RADIUS   = 2000;    // Harita yarıçapı
-export const MAP_CENTER   = 2000;    // Merkez x ve y
-export const MAP_SIZE     = 4000;    // MAP_RADIUS * 2
+export const MAP_RADIUS   = 2000;
+export const MAP_CENTER   = 2000;
+export const MAP_SIZE     = 4000;
 
-export const BASE_SPEED   = 180;     // px/saniye (delta time ile)
-export const SPEED_SCALE  = 0.001;   // Büyüdükçe hız azalma
+export const BASE_SPEED      = 180;     // px/sn
+export const SPEED_SCALE     = 0.001;
 
-export const BASE_RADIUS  = 28;      // Başlangıç radius
-export const MAX_RADIUS   = 140;     // Maksimum radius
-export const RADIUS_GROWTH = 0.25;   // Score başına radius artışı
+export const TURN_SPEED_BASE  = 4.0;   // rad/sn — başlangıç dönüş hızı
+export const TURN_SPEED_SCALE = 0.003; // skor başına azalma
 
-export const EAT_RATIO    = 1.1;     // Yemek için min boyut oranı
-export const SNEAK_ANGLE_THRESHOLD = 0.26;  // ~15° sneak attack
+export const BASE_RADIUS   = 28;
+export const MAX_RADIUS    = 140;
+export const RADIUS_GROWTH = 0.25;
 
-export const FOOD_VALUE   = 1;       // Yem skor değeri (sabit)
-export const KILL_RATIO   = 0.5;     // Öldürme bonusu çarpanı
-export const FOOD_COUNT   = 400;     // Haritada sabit yem sayısı
-export const FOOD_RADIUS  = 6;       // Yem görsel yarıçapı
+export const EAT_RATIO    = 1.1;
+export const SNEAK_ANGLE_THRESHOLD = 0.26;
 
-export const CORPSE_LIFETIME = 30000; // Corpse yaşam süresi (ms)
-export const CORPSE_OPACITY  = 0.7;   // Ölü kurbağa saydamlığı
+export const FOOD_VALUE   = 1;
+export const KILL_RATIO   = 0.5;
+export const FOOD_COUNT   = 400;
+export const FOOD_RADIUS  = 6;
 
-export const JUMP_PERIOD    = 500;    // Zıplama döngüsü (ms)
-export const JUMP_AMPLITUDE = 0.15;   // Squash & stretch şiddeti
-export const JUMP_HEIGHT    = 8;      // Dikey zıplama ofseti (px)
+// Dil mekaniği
+export const TONGUE_INTERVAL_MIN  = 1000;  // ms — en kısa bekleme
+export const TONGUE_INTERVAL_MAX  = 2000;  // ms — en uzun bekleme
+export const TONGUE_EXTEND_MS     = 180;   // ms — çıkma süresi
+export const TONGUE_OUT_MS        = 120;   // ms — dışarıda bekleme
+export const TONGUE_RETRACT_MS    = 150;   // ms — geri çekilme süresi
+export const TONGUE_LENGTH_RATIO  = 1.5;   // dil uzunluğu = radius * 1.5
+export const TONGUE_TIP_RADIUS    = 6;     // dil ucu çarpışma yarıçapı (px)
+export const TONGUE_LOCK_ROTATION = true;  // dil dışarıdayken dönüş kilitli
 
-export const MAX_PLAYERS_PER_ROOM = 3;   // Test fazı (Faz 3'te 20)
-export const TICK_RATE  = 20;            // Sunucu Hz
-export const BORDER_DAMAGE = 0;          // Şimdilik 0 — sınır fizik ile çözüldü
+// Vücut çarpışması
+export const BODY_COLLISION_PENALTY  = 0.25;   // %25 skor kaybı
+export const BODY_COLLISION_COOLDOWN = 2000;   // ms — hasar cooldown
+
+// Zehir efekti
+export const POISON_EFFECT_MS = 1500;   // ms — efekt süresi
+
+// Diğer
+export const CORPSE_LIFETIME = 30000;
+export const CORPSE_OPACITY  = 0.7;
+export const JUMP_PERIOD     = 500;
+export const JUMP_AMPLITUDE  = 0.15;
+export const JUMP_HEIGHT     = 8;
+export const MAX_PLAYERS_PER_ROOM = 3;
+export const TICK_RATE       = 20;
 ```
 
 ---
 
-## 10. Render Sırası
+## 12. Render Sırası
 
 ```
 1. ctx.clearRect(0, 0, W, H)
 2. camera.apply(ctx)
-   3. Dış alan fill (#0a0a0a — harita dışı karanlık)
-   4. ctx.clip() — daire clip path başlat
-   5. Arkaplan (degrade + grid) — daire içi
+   3. Dış alan fill (#0a0a0a)
+   4. ctx.clip() — daire clip
+   5. Arkaplan (degrade + grid)
    6. Yemler
-   7. Corpse'lar (ölü kurbağalar, %70 opacity)
-   8. Canlı kurbağalar (radius küçükten büyüğe sort)
-   9. İsimler / score bubble
-   10. ctx.restore() — clip biter
-   11. Sınır halkası (clip dışında, üstte çizilir)
-12. camera.restore(ctx)
-13. HUD (DOM overlay)
+   7. Corpse'lar (%70 opacity)
+   8. Diller (kurbağalardan önce — vücut sprite üstte görünsün)
+   9. Canlı kurbağalar (radius küçükten büyüğe)
+   10. Zehir efekti overlay (aktifse)
+   11. İsimler / score bubble
+   12. ctx.restore() — clip biter
+   13. Sınır halkası
+14. camera.restore(ctx)
+15. HUD (DOM overlay)
 ```
 
 ---
 
-## 11. Faz 2 Ağ Protokolü
+## 13. Ağ Protokolü
 
 ```js
-// Input — unreliable, her frame
-channel.emit('input', { angle: frog.angle }, { reliable: false })
+// Input — unreliable
+channel.emit('input', { angle: frog.angle, tongueForce: bool }, { reliable: false })
 
-// State snapshot — delta, unreliable
-// Format:
+// State snapshot — unreliable
 {
-  frogs:   [{ id, x, y, angle, radius, score, isAlive }],
-  corpses: [{ id, x, y, radius, score }],           // ölü kurbağalar
-  foods:   { added: [...], removed: [id, ...] }     // delta
+  frogs: [{
+    id, x, y, angle, radius, score, isAlive,
+    tongue: { state, progress, angle, tip }   // dil state snapshot'a dahil
+  }],
+  corpses: [...],
+  foods: { added: [...], removed: [...] }
 }
 
 // Kritik eventler — reliable
-channel.emit('game:eat',    { killerId, victimId, newScore }, { reliable: true })
-channel.emit('game:eatFood',{ frogId, foodId, newScore },    { reliable: true })
-channel.emit('game:dead',   { victimId, killerId },          { reliable: true })
-channel.emit('game:corpseEaten', { eaterId, corpseId, bonus }, { reliable: true })
-channel.emit('game:end',    { ... },                         { reliable: true })
+channel.emit('game:tongueEat',     { killer, victim, type }, { reliable: true })
+channel.emit('game:bodyCollision', { a, b, penaltyA, penaltyB }, { reliable: true })
+channel.emit('effect:poison',      { ids: [aId, bId] },        { reliable: true })
+channel.emit('game:eat',           { killer, victim },          { reliable: true })
+channel.emit('game:dead',          { victim, killer },          { reliable: true })
+channel.emit('game:end',           { ... },                     { reliable: true })
 ```
 
 ---
 
-## 12. Performans Kuralları
+## 14. Performans Kuralları
 
 | Teknik | Açıklama |
 |---|---|
@@ -444,19 +625,19 @@ channel.emit('game:end',    { ... },                         { reliable: true })
 | `createImageBitmap()` | Sprite önbelleği |
 | Delta Time | `speed * deltaTime` — frame rate bağımsız |
 | Delta Compression | Sunucu sadece değişenleri gönderir |
-| Clip Path Cache | `ctx.clip()` dairesi her frame yeniden hesaplanır — OffscreenCanvas ile önbelleğe al |
+| Dil culling | `tongue.state === 'idle'` ise drawTongue çağrılmaz |
 
 ---
 
-## 13. Kod Kalitesi
+## 15. Kod Kalitesi
 
 - ES2022 `import/export` — CommonJS kullanma
 - JSDoc ile tüm public metodları belgele
 - `shared/constants.js` sabitlerini kullan — magic number yasak
 - Tek sorumluluk: her dosya tek bir şey yapar
-- Event isimleri `kebab-case` + namespace: `game:start`, `room:join`
+- Event isimleri `kebab-case` + namespace: `game:start`, `effect:poison`
 - Commit formatı: `feat|fix|perf|refactor: açıklama`
 
 ---
 
-*FrogBattle.io · .cursorrules v2.1 · Faz 2.5 Bug Fix · 🐸*
+*FrogBattle.io · .cursorrules v2.2 · Faz 2.6 Dil Mekaniği · 🐸*

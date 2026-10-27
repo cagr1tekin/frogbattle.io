@@ -40,6 +40,19 @@ export class GeckosClient {
   }
 
   /**
+   * Oyuncu girdisi — sunucu `targetAngle` + dil zorla çıkarma (unreliable, her kare).
+   * @param {number} angle hedef açı (radyan) — fare yönü; sunucu skora bağlı döner.
+   * @param {boolean} [tongueForce]
+   */
+  sendInput(angle, tongueForce = false) {
+    this.emit(
+      'input',
+      { angle, tongueForce: !!tongueForce },
+      { reliable: false },
+    );
+  }
+
+  /**
    * @returns {Promise<void>}
    */
   connect() {

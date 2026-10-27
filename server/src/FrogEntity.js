@@ -8,10 +8,14 @@ import {
   RADIUS_GROWTH,
   SPEED_SCALE,
   SNEAK_ANGLE_THRESHOLD,
+  TONGUE_INTERVAL_MAX,
+  TONGUE_INTERVAL_MIN,
+  TURN_SPEED_BASE,
+  TURN_SPEED_SCALE,
 } from '../../shared/constants.js';
 
 /**
- * Sunucu tarafı kurbağa — sabit hız; sınırda sadece pozisyon daire içine çekilir (açı/hız formülü değişmez).
+ * Sunucu tarafı kurbağa — sabit hız; skora bağlı dönüş; sınırda pozisyon clamp.
  */
 export class FrogEntity {
   /**
@@ -27,10 +31,31 @@ export class FrogEntity {
     this.x = x;
     this.y = y;
     this.angle = -Math.PI / 2;
+    this.targetAngle = this.angle;
     this.score = 0;
     this.radius = BASE_RADIUS;
     this.color = color;
     this.isAlive = true;
+
+    this.tongue = {
+      state: 'idle',
+      progress: 0,
+      angle: 0,
+      lockedAngle: this.angle,
+      lockRotation: false,
+      nextAutoTime: 0,
+      tip: { x, y },
+      outTimer: 0,
+    };
+    this.tongue.nextAutoTime = Date.now() + this._randomTongueInterval();
+    this.bodyCollisionCooldown = 0;
+  }
+
+  _randomTongueInterval() {
+    return (
+      TONGUE_INTERVAL_MIN +
+      Math.random() * (TONGUE_INTERVAL_MAX - TONGUE_INTERVAL_MIN)
+    );
   }
 
   /**
@@ -50,6 +75,26 @@ export class FrogEntity {
    * @param {number} deltaTime saniye
    */
   update(deltaTime) {
+    if (this.bodyCollisionCooldown > 0) {
+      this.bodyCollisionCooldown = Math.max(
+        0,
+        this.bodyCollisionCooldown - deltaTime * 1000,
+      );
+    }
+
+    if (this.tongue && this.tongue.lockRotation) {
+      this.angle = this.tongue.lockedAngle;
+    } else {
+      const turnSpeed =
+        TURN_SPEED_BASE / (1 + this.score * TURN_SPEED_SCALE);
+      let delta = this.targetAngle - this.angle;
+      while (delta > Math.PI) delta -= Math.PI * 2;
+      while (delta < -Math.PI) delta += Math.PI * 2;
+      const maxTurn = turnSpeed * deltaTime;
+      this.angle +=
+        Math.sign(delta) * Math.min(Math.abs(delta), maxTurn);
+    }
+
     const speed = BASE_SPEED / (1 + this.score * SPEED_SCALE);
     this.x += Math.cos(this.angle) * speed * deltaTime;
     this.y += Math.sin(this.angle) * speed * deltaTime;

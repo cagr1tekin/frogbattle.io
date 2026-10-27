@@ -42,6 +42,7 @@ export class LocalGame {
       const y = MAP_CENTER + Math.sin(angle) * dist;
       const bot = new FrogEntity(`bot_${i + 1}`, x, y, '#f472b6');
       bot.angle = Math.random() * Math.PI * 2;
+      bot.targetAngle = bot.angle;
       this.aiFrogs.push(bot);
     }
 
@@ -68,6 +69,7 @@ export class LocalGame {
     this.playerFrog.score = 0;
     this.playerFrog.radius = BASE_RADIUS;
     this.playerFrog.angle = -Math.PI / 2;
+    this.playerFrog.targetAngle = this.playerFrog.angle;
     this.playerFrog.isAlive = true;
   }
 
@@ -76,7 +78,7 @@ export class LocalGame {
    */
   update(deltaTime) {
     if (this.playerFrog.isAlive) {
-      this.playerFrog.angle = this.inputHandler.getAngle();
+      this.playerFrog.targetAngle = this.inputHandler.getAngle();
       this.playerFrog.update(deltaTime);
     }
 
@@ -103,7 +105,7 @@ export class LocalGame {
       this._aiTimers[i] += deltaTime;
       if (this._aiTimers[i] >= AI_ANGLE_REPICK) {
         this._aiTimers[i] = 0;
-        bot.angle += (Math.random() - 0.5) * 1.2;
+        bot.targetAngle += (Math.random() - 0.5) * 1.2;
       }
       bot.update(deltaTime);
     }
